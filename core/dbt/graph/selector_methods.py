@@ -36,6 +36,7 @@ from dbt_common.dataclass_schema import StrEnum
 from dbt_common.events.contextvars import get_project_root
 from dbt_common.exceptions import DbtInternalError, DbtRuntimeError
 
+from .contract_data_tests import select_contract_data_tests
 from .graph import UniqueId
 
 SELECTOR_GLOB = "*"
@@ -611,6 +612,7 @@ class StateSelectorMethod(SelectorMethod):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.modified_macros: Optional[List[str]] = None
+        self._contract_data_test_selection: Optional[Set[str]] = None
 
     def _macros_modified(self) -> List[str]:
         # we checked in the caller!
@@ -738,9 +740,27 @@ class StateSelectorMethod(SelectorMethod):
 
         return check_modified_contract
 
+    def check_modified_contract_data_tests(self, old, new: SelectorTarget) -> bool:
+        # Selects data tests affected by contract changes, computed once per
+        # invocation from the previous and current manifests. See
+        # dbt.graph.contract_data_tests for the selection semantics.
+        if self._contract_data_test_selection is None:
+            if self.previous_state is None or self.previous_state.manifest is None:
+                raise DbtInternalError(
+                    "No comparison manifest in check_modified_contract_data_tests"
+                )
+            self._contract_data_test_selection = select_contract_data_tests(
+                self.previous_state.manifest, self.manifest
+            )
+        return new is not None and new.unique_id in self._contract_data_test_selection
+
     def search(self, included_nodes: Set[UniqueId], selector: str) -> Iterator[UniqueId]:
         if self.previous_state is None or self.previous_state.manifest is None:
-            raise DbtRuntimeError("Got a state selector method, but no comparison manifest")
+            raise DbtRuntimeError(
+                "Got a state selector method, but no comparison manifest. "
+                "Make sure --state points to a directory containing a readable "
+                "manifest.json produced by a compatible dbt version."
+            )
 
         adapter_type = self.manifest.metadata.adapter_type
 
@@ -759,6 +779,7 @@ class StateSelectorMethod(SelectorMethod):
             "modified.relation": self.check_modified_factory("same_database_representation"),
             "modified.macros": self.check_modified_macros,
             "modified.contract": self.check_modified_contract("same_contract", adapter_type),
+            "modified.contract.data_tests": self.check_modified_contract_data_tests,
         }
         if selector in state_checks:
             checker = state_checks[selector]

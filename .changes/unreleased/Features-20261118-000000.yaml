@@ -1,0 +1,6 @@
+kind: Features
+body: Add `state:modified.contract.data_tests` state selector to run only the data tests affected by model contract changes, with column-level precision for built-in `not_null`/`unique`/`relationships` tests and dependency-graph fallback for everything else
+time: 2026-11-18T00:00:00.000000+08:00
+custom:
+  Author: claude
+  Issue: "12127"
