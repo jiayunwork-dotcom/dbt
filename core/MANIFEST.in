@@ -1,4 +1,5 @@
 recursive-include dbt/include *.py *.sql *.yml *.html *.md .gitkeep .gitignore
+recursive-include dbt/snapshot_scope/include *.py *.sql *.yml
 include dbt/py.typed
 recursive-include dbt/task/docs *.html
 recursive-include dbt/jsonschemas *.json

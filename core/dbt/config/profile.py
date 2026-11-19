@@ -19,6 +19,12 @@ from dbt_common.dataclass_schema import ValidationError
 from dbt_common.events.functions import fire_event
 from dbt_common.exceptions import DbtValidationError
 
+# Registers dbt-core's internal snapshot-scope macro package with the adapter
+# factory. Imported for its side effect; the module is also used explicitly in
+# tests. This must run before the first adapter plugin is loaded, and profile
+# rendering always happens before plugin loading.
+from dbt.snapshot_scope import _register  # noqa: F401
+
 from .renderer import ProfileRenderer
 
 DEFAULT_THREADS = 1

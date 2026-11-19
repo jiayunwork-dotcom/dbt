@@ -1,0 +1,6 @@
+kind: Features
+body: Add optional `hard_deletes_scope` snapshot config so hard deletes are only applied to keys whose warehouse appears on a batch-level complete-reporting list, while partial-reporting warehouses keep their currently valid history rows
+time: 2026-11-19T00:00:00.000000+08:00
+custom:
+  Author: claude
+  Issue: "12128"
