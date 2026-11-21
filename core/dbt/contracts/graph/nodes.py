@@ -1103,6 +1103,24 @@ class UnitTestDefinition(NodeInfoMixin, GraphNode, UnitTestDefinitionResource):
 
         self.checksum = hashlib.new("sha256", data.encode("utf-8")).hexdigest()
 
+    def fixture_names(self) -> List[str]:
+        """Return the names (not unique_ids) of every fixture file this unit test
+        reads, in a stable order and without duplicates.
+
+        Both the ``given`` inputs and the ``expect`` output can be backed by a
+        fixture file, and the same fixture can legitimately be referenced more
+        than once by a single test (for instance as both an input and the
+        expected output). Partial parsing needs this full set, not just the ones
+        seen while normalizing rows, to know which unit test definitions must be
+        rebuilt when a fixture file changes.
+        """
+        names: List[str] = []
+        for fixture in list(self.given) + [self.expect]:
+            name = fixture.fixture
+            if name and name not in names:
+                names.append(name)
+        return names
+
     def same_contents(self, other: Optional["UnitTestDefinition"]) -> bool:
         if other is None:
             return False

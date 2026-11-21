@@ -617,18 +617,62 @@ class PartialParsing:
         self.saved_manifest.files.pop(source_file.file_id)
 
     def delete_fixture_node(self, source_file):
-        # remove fixtures from the "fixtures" dictionary
+        # Remove the fixture from the "fixtures" dictionary. A fixture file that has
+        # already been removed (for example because it was both updated and processed
+        # through another path) must not raise here.
         fixture_unique_id = source_file.fixture
-        self.saved_manifest.fixtures.pop(fixture_unique_id)
-        unit_tests = source_file.unit_tests.copy()
-        for unique_id in unit_tests:
-            unit_test = self.saved_manifest.unit_tests.pop(unique_id)
-            # schedule unit_test for parsing
-            self._schedule_for_parsing(
-                "unit_tests", unit_test, unit_test.name, self.delete_schema_unit_test
-            )
-            source_file.unit_tests.remove(unique_id)
+        fixture = self.saved_manifest.fixtures.pop(fixture_unique_id, None)
+        fixture_name = None
+        if fixture is not None:
+            fixture_name = fixture.name
+        elif fixture_unique_id:
+            # "fixture.<package>.<name>" -- the name may contain dots.
+            parts = fixture_unique_id.split(".")
+            if len(parts) > 2:
+                fixture_name = ".".join(parts[2:])
+
+        # Rebuild every unit test definition that reads this fixture. The fixture rows
+        # are baked into the definition when the schema file is parsed, so definitions
+        # have to be parsed again rather than patched.
+        #
+        # The recorded unique_ids in ``source_file.unit_tests`` are not enough on their
+        # own: for versioned models one parsed definition expands into ``<name>_v<n>``
+        # definitions during ``process_unit_tests``, so a manifest written by an older
+        # dbt can still list the pre-expansion id. Also, a test may reference the same
+        # fixture more than once (e.g. as an input and as its expected output). Collect
+        # the targets from the manifest as well, keyed by fixture name, so every
+        # expanded variant is rebuilt exactly once and stale ids are harmless.
+        to_rebuild: List[str] = []
+        for unique_id in source_file.unit_tests:
+            if unique_id not in to_rebuild:
+                to_rebuild.append(unique_id)
+        if fixture_name is not None:
+            for unique_id, unit_test in self.saved_manifest.unit_tests.items():
+                if unique_id in to_rebuild:
+                    continue
+                if fixture_name in unit_test.fixture_names():
+                    to_rebuild.append(unique_id)
+        source_file.unit_tests = []
+
+        for unique_id in to_rebuild:
+            self._rebuild_unit_test_for_fixture(unique_id)
         self.saved_manifest.files.pop(source_file.file_id)
+
+    def _rebuild_unit_test_for_fixture(self, unique_id):
+        # Schedule the unit test's schema file for reparsing. This removes the definition
+        # (by name, which also covers its version-expanded variants) and re-adds the
+        # yaml element to the schema file's pp_dict.
+        unit_test = self.saved_manifest.unit_tests.get(unique_id)
+        if unit_test is None:
+            # Already rebuilt through another fixture of the same test.
+            return
+        self._schedule_for_parsing(
+            "unit_tests", unit_test, unit_test.name, self.delete_schema_unit_test
+        )
+        # ``_schedule_for_parsing`` only acts when the owning schema file still exists
+        # and contains the yaml element. If it did not remove the definition, drop it
+        # here so a stale definition cannot survive the rebuild.
+        self.saved_manifest.unit_tests.pop(unique_id, None)
 
     # Schema files -----------------------
     # Changed schema files
@@ -1071,14 +1115,38 @@ class PartialParsing:
 
     def delete_schema_unit_test(self, schema_file, unit_test_dict):
         unit_test_name = unit_test_dict["name"]
+        unit_test_model = unit_test_dict.get("model")
+        if isinstance(unit_test_model, str):
+            # ``model`` may carry an explicit version, e.g. "my_model.v2".
+            unit_test_model = unit_test_model.split()[0]
         unit_tests = schema_file.unit_tests.copy()
+        candidates: List[str] = []
         for unique_id in unit_tests:
-            if unique_id in self.saved_manifest.unit_tests:
-                unit_test = self.saved_manifest.unit_tests[unique_id]
-                if unit_test.name == unit_test_name:
-                    self.saved_manifest.unit_tests.pop(unique_id)
-                    schema_file.unit_tests.remove(unique_id)
-            # No disabled unit tests yet
+            if unique_id in candidates:
+                continue
+            if (
+                unique_id in self.saved_manifest.unit_tests
+                and self.saved_manifest.unit_tests[unique_id].name == unit_test_name
+            ):
+                candidates.append(unique_id)
+        # Normally the test is identified by (model, name), and several tests can share a
+        # name as long as they target different models. If the yaml element changed its
+        # model, no definition matches the new model yet, so fall back to removing all
+        # definitions with this name.
+        if unit_test_model is not None and any(
+            self.saved_manifest.unit_tests[unique_id].model == unit_test_model
+            for unique_id in candidates
+        ):
+            candidates = [
+                unique_id
+                for unique_id in candidates
+                if self.saved_manifest.unit_tests[unique_id].model == unit_test_model
+            ]
+        for unique_id in candidates:
+            self.saved_manifest.unit_tests.pop(unique_id)
+            while unique_id in schema_file.unit_tests:
+                schema_file.unit_tests.remove(unique_id)
+        # No disabled unit tests yet
 
     def get_schema_element(self, elem_list, elem_name):
         for element in elem_list:

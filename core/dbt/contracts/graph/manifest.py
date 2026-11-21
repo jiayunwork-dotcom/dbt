@@ -1697,6 +1697,67 @@ class Manifest(MacroMethods, dbtClassMixin):
         self.fixtures[fixture.unique_id] = fixture
         source_file.fixture = fixture.unique_id
 
+    def rebuild_unit_test_source_links(self) -> None:
+        """Rebuild the schema source file -> unit test definition index.
+
+        ``SchemaSourceFile.unit_tests`` is used by partial parsing to find the
+        definitions that belong to a yaml element. It is derived data: for versioned
+        models one parsed definition is expanded into one definition per model version,
+        and every reparse appends to the list again. Recompute the list from the
+        definitions that actually exist so a cached manifest written, reloaded and
+        reparsed over many rounds never accumulates stale or duplicated ids.
+        """
+        for source_file in self.files.values():
+            if isinstance(source_file, SchemaSourceFile):
+                source_file.unit_tests = []
+
+        unit_test_defs: List[UnitTestDefinition] = list(self.unit_tests.values())
+        for disabled_nodes in self.disabled.values():
+            for node in disabled_nodes:
+                if isinstance(node, UnitTestDefinition):
+                    unit_test_defs.append(node)
+
+        for unit_test in unit_test_defs:
+            source_file = self.files.get(unit_test.file_id)
+            if isinstance(source_file, SchemaSourceFile):
+                if unit_test.unique_id not in source_file.unit_tests:
+                    source_file.unit_tests.append(unit_test.unique_id)
+
+    def rebuild_fixture_usage(self) -> None:
+        """Rebuild the fixture -> unit test usage index from the unit tests in the manifest.
+
+        ``FixtureSourceFile.unit_tests`` is the index partial parsing uses to know
+        which unit test definitions must be rebuilt when a fixture file changes. It is
+        derived data: version expansion replaces a single parsed definition with one
+        definition per model version, tests can be deleted or renamed, and a test can
+        reference the same fixture several times (e.g. as both an input and the
+        expected output). Rather than trying to keep the index in sync through every
+        mutation, recompute it after parsing so the saved (and reloaded) manifest
+        always reflects exactly the definitions that exist right now.
+        """
+        for source_file in self.files.values():
+            if isinstance(source_file, FixtureSourceFile):
+                source_file.unit_tests = []
+
+        unit_test_defs: List[UnitTestDefinition] = list(self.unit_tests.values())
+        for disabled_nodes in self.disabled.values():
+            for node in disabled_nodes:
+                if isinstance(node, UnitTestDefinition):
+                    unit_test_defs.append(node)
+
+        for unit_test in unit_test_defs:
+            for fixture_name in unit_test.fixture_names():
+                fixture = self.fixtures.get(
+                    f"{NodeType.Fixture}.{unit_test.package_name}.{fixture_name}"
+                )
+                if fixture is None:
+                    # A missing fixture is reported when the unit test is parsed,
+                    # not here. Don't let the usage index hide that error.
+                    continue
+                fixture_source_file = self.files.get(fixture.file_id)
+                if isinstance(fixture_source_file, FixtureSourceFile):
+                    fixture_source_file.add_unit_test(unit_test.unique_id)
+
     def add_saved_query(self, source_file: SchemaSourceFile, saved_query: SavedQuery) -> None:
         _check_duplicates(saved_query, self.saved_queries)
         self.saved_queries[saved_query.unique_id] = saved_query

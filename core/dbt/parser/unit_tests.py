@@ -337,14 +337,19 @@ class UnitTestParser(YamlReader):
         fqn.append(test_name)
         return fqn
 
-    def _get_fixture(self, fixture_name: str, project_name: str):
+    def _get_fixture(
+        self, fixture_name: str, project_name: str, unit_test_unique_id: Optional[str] = None
+    ):
         fixture_unique_id = f"{NodeType.Fixture}.{project_name}.{fixture_name}"
         if fixture_unique_id in self.manifest.fixtures:
             fixture = self.manifest.fixtures[fixture_unique_id]
             return fixture
         else:
+            referencing = ""
+            if unit_test_unique_id:
+                referencing = f". Unit test '{unit_test_unique_id}' references it"
             raise ParsingError(
-                f"File not found for fixture '{fixture_name}' in unit tests in {self.yaml.path.original_file_path}"
+                f"File not found for fixture '{fixture_name}' in unit tests in {self.yaml.path.original_file_path}{referencing}"
             )
 
     def _validate_and_normalize_given(self, unit_test_definition):
@@ -435,10 +440,11 @@ class UnitTestParser(YamlReader):
             )
 
     def get_fixture_file_rows(self, fixture_name, project_name, utdef_unique_id):
-        # find fixture file object and store unit_test_definition unique_id
-        fixture = self._get_fixture(fixture_name, project_name)
-        fixture_source_file = self.manifest.files[fixture.file_id]
-        fixture_source_file.unit_tests.append(utdef_unique_id)
+        # Find the fixture file object. The unit test's use of the fixture is recorded
+        # separately by the manifest loader after version expansion
+        # (Manifest.rebuild_fixture_usage), so that it also covers the version-expanded
+        # definitions, which do not exist yet at parse time.
+        fixture = self._get_fixture(fixture_name, project_name, utdef_unique_id)
         return fixture.rows
 
     def _convert_csv_to_list_of_dicts(self, csv_string: str) -> List[Dict[str, Any]]:

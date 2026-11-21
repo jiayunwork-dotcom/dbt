@@ -475,6 +475,11 @@ class ManifestLoader:
             self.process_sources(self.root_project.project_name)
             self.process_refs(self.root_project.project_name, self.root_project.dependencies)
             self.process_unit_tests(self.root_project.project_name)
+            # process_unit_tests may expand versioned definitions and drop old ones, so
+            # rebuild the definition indexes from the definitions that actually exist.
+            # These are what gets serialized into partial_parse.msgpack.
+            self.manifest.rebuild_unit_test_source_links()
+            self.manifest.rebuild_fixture_usage()
             self.process_docs(self.root_project)
             self.process_metrics(self.root_project)
             self.process_saved_queries(self.root_project)
